@@ -1,0 +1,8 @@
+[package]
+name = "mpsc-stress"
+version = "0.1.0"
+authors = ["David Simmons <simmons@davidsimmons.com>"]
+
+[dependencies]
+futures = "0.1.19"
+tokio-core = "0.1"
