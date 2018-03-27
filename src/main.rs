@@ -17,7 +17,7 @@ extern crate tokio_core;
 
 use std::thread;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration,Instant};
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use futures::sync::oneshot;
@@ -30,6 +30,10 @@ const ITERATION_COUNT: usize = 1000000;
 /// leads to a race), we busy-re-poll the test MPSC receiver a variable number of times before
 /// actually stopping.  We vary this countdown between 1 and the following value.
 const MAX_COUNTDOWN: usize = 20;
+
+/// When we detect that a successfully sent item is still in the queue after a disconnect, we spin
+/// for up to 100ms to confirm that it is a persistent condition and not a concurrency illusion.
+const SPIN_TIMEOUT_MS: u64 = 100;
 
 /// Each test iteration consists of an MPSC receiver submitted to the future and queried in a
 /// busy-loop the specified number of times before dropping the receiver.
@@ -150,24 +154,34 @@ fn main() {
                 Err(ref e) if e.is_disconnected() => {
                     // Test for evidence of the race condition.
                     if let Some(previous_weak) = previous_weak {
-                        if let Some(_) = previous_weak.upgrade() {
-                            // The receiver end of the channel has been dropped, and yet the
-                            // previously sent item is still allocated.  This is due to the race
-                            // condition in the MPSC implementation whereby a sent item can be
-                            // accepted into the channel after the receiver is closed.  The item
-                            // will not be dropped until the Sender is dropped.
+                        if previous_weak.upgrade().is_some() {
+                            // The previously sent item is still allocated.  However, there appears
+                            // to be some aspect of the concurrency that can legitimately cause the
+                            // Arc to be momentarily valid.  Spin for up to 100ms waiting for the
+                            // previously sent item to be dropped.
+                            let start = Instant::now();
+                            let timeout = Duration::from_millis(SPIN_TIMEOUT_MS);
+                            let mut spin_count = 0usize;
+                            loop {
+                                if previous_weak.upgrade().is_none() {
+                                    break;
+                                }
+                                if start.elapsed() > timeout {
+                                    // The receiver end of the channel has been dropped, and yet the
+                                    // previously sent item is still allocated.  This is due to the race
+                                    // condition in the MPSC implementation whereby a sent item can be
+                                    // accepted into the channel after the receiver is closed.  The item
+                                    // will not be dropped until the Sender is dropped.
 
-                            // Just to demonstrate that this condition is persistent, we will sleep
-                            // for one second and confirm again that the item has not been dropped.
-                            thread::sleep(Duration::from_secs(1));
-                            if let Some(_) = previous_weak.upgrade() {
-                                println!(
-                                    "RACE CONDITION DETECTED on test iteration {} \
-                                     after {} send attempts ({} successful).",
-                                    i, attempted_send_count, successful_send_count
-                                );
-                                // Ungracefully exit with an error indication.
-                                std::process::exit(1);
+                                    println!(
+                                        "RACE CONDITION DETECTED on test iteration {} \
+                                         after {} send attempts ({} successful).  (spin={})",
+                                        i, attempted_send_count, successful_send_count, spin_count
+                                    );
+                                    // Ungracefully exit with an error indication.
+                                    std::process::exit(1);
+                                }
+                                spin_count += 1;
                             }
                         }
                     }
