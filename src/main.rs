@@ -1,4 +1,4 @@
-//! This program demonstrates a race condition in the Futures 0.1.19 MPSC implementation.  If a
+//! This program demonstrates a race condition in the Futures 0.1.23 MPSC implementation.  If a
 //! send occurs concurrently with the receiver close/drop, a successful send may be indicated even
 //! though the item is actually stuck in a disconnected channel (until the Sender is dropped).
 //!
@@ -13,7 +13,7 @@
 //!
 
 extern crate futures;
-extern crate tokio_core;
+extern crate tokio;
 
 use std::thread;
 use std::sync::{Arc, Weak};
@@ -21,7 +21,6 @@ use std::time::{Duration,Instant};
 use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use futures::sync::oneshot;
-use tokio_core::reactor::Core;
 
 /// How many times will we run the test before giving up?
 const ITERATION_COUNT: usize = 1000000;
@@ -106,10 +105,9 @@ impl Future for TestFuture {
 fn reactor_thread() -> mpsc::Sender<Test> {
     let (tx, rx) = oneshot::channel::<mpsc::Sender<Test>>();
     thread::spawn(move || {
-        let mut core = Core::new().unwrap();
         let (future, cmd_tx) = TestFuture::new();
         tx.send(cmd_tx).unwrap();
-        core.run(future).unwrap();
+        tokio::run(future);
     });
     let cmd_tx = rx.wait().unwrap();
     cmd_tx

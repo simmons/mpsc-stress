@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["David Simmons <simmons@davidsimmons.com>"]
 
 [dependencies]
-futures = "0.1.19"
-tokio-core = "0.1"
+futures = "0.1.23"
+tokio = "0.1.7"
